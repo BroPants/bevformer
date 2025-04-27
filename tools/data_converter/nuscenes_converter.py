@@ -46,10 +46,12 @@ def create_nuscenes_infos(root_path,
             Default: 10
     """
     from nuscenes.nuscenes import NuScenes
-    from nuscenes.can_bus.can_bus_api import NuScenesCanBus
     print(version, root_path)
     nusc = NuScenes(version=version, dataroot=root_path, verbose=True)
-    nusc_can_bus = NuScenesCanBus(dataroot=can_bus_root_path)
+    
+    # 移除CAN bus相关代码
+    nusc_can_bus = None
+    
     from nuscenes.utils import splits
     available_vers = ['v1.0-trainval', 'v1.0-test', 'v1.0-mini']
     assert version in available_vers

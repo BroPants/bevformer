@@ -89,7 +89,7 @@ def render_annotation(
     data_path, boxes, camera_intrinsic = nusc.get_sample_data(lidar, selected_anntokens=[anntoken])
     LidarPointCloud.from_file(data_path).render_height(axes[0], view=view)
     for box in boxes:
-        c = np.array(get_color(box.name)) / 255.0
+        c = np.array(get_color(box.name, nusc)) / 255.0
         box.render(axes[0], view=view, colors=(c, c, c))
         corners = view_points(boxes[0].corners(), view, False)[:2, :]
         axes[0].set_xlim([np.min(corners[0, :]) - margin, np.max(corners[0, :]) + margin])
@@ -107,7 +107,7 @@ def render_annotation(
         axes[i].axis('off')
         axes[i].set_aspect('equal')
         for box in boxes:
-            c = np.array(get_color(box.name)) / 255.0
+            c = np.array(get_color(box.name, nusc)) / 255.0
             box.render(axes[i], view=camera_intrinsic, normalize=True, colors=(c, c, c))
 
         # Print extra information about the annotation below the camera view.
@@ -144,10 +144,12 @@ def render_annotation(
 
 
 
-def get_sample_data(sample_data_token: str,
-                    box_vis_level: BoxVisibility = BoxVisibility.ANY,
-                    selected_anntokens=None,
-                    use_flat_vehicle_coordinates: bool = False):
+def get_sample_data(
+        sample_data_token: str,
+        box_vis_level: BoxVisibility = BoxVisibility.ANY,
+        selected_anntokens=None,
+        use_flat_vehicle_coordinates: bool = False,
+        nusc=None):
     """
     Returns the data path as well as all annotations related to that sample_data.
     Note that the boxes are transformed into the current sensor's coordinate frame.
@@ -156,8 +158,11 @@ def get_sample_data(sample_data_token: str,
     :param selected_anntokens: If provided only return the selected annotation.
     :param use_flat_vehicle_coordinates: Instead of the current sensor's coordinate frame, use ego frame which is
                                          aligned to z-plane in the world.
+    :param nusc: NuScenes object.
     :return: (data_path, boxes, camera_intrinsic <np.array: 3, 3>)
     """
+    if nusc is None:
+        raise ValueError("nusc parameter is required")
 
     # Retrieve sensor & pose records
     sd_record = nusc.get('sample_data', sample_data_token)
@@ -272,79 +277,120 @@ def get_predicted_data(sample_data_token: str,
 
 
 
-def lidiar_render(sample_token, data,out_path=None):
+def lidiar_render(sample_token, data, out_path=None, nusc=None):
     bbox_gt_list = []
     bbox_pred_list = []
-    anns = nusc.get('sample', sample_token)['anns']
+    
+    # Get ground truth boxes
+    sample = nusc.get('sample', sample_token)
+    anns = sample['anns']
     for ann in anns:
-        content = nusc.get('sample_annotation', ann)
-        try:
-            bbox_gt_list.append(DetectionBox(
-                sample_token=content['sample_token'],
-                translation=tuple(content['translation']),
-                size=tuple(content['size']),
-                rotation=tuple(content['rotation']),
-                velocity=nusc.box_velocity(content['token'])[:2],
-                ego_translation=(0.0, 0.0, 0.0) if 'ego_translation' not in content
-                else tuple(content['ego_translation']),
-                num_pts=-1 if 'num_pts' not in content else int(content['num_pts']),
-                detection_name=category_to_detection_name(content['category_name']),
-                detection_score=-1.0 if 'detection_score' not in content else float(content['detection_score']),
-                attribute_name=''))
-        except:
-            pass
+        ann_record = nusc.get('sample_annotation', ann)
+        bbox_gt = nusc.get_box(ann_record['token'])
+        bbox_gt_list.append(bbox_gt)
+    
+    # Get predicted boxes if available
+    if data is not None and 'results' in data:
+        bbox_anns = data['results'][sample_token]
+        for box in bbox_anns:
+            bbox_pred = DetectionBox(
+                sample_token=box['sample_token'],
+                translation=box['translation'],
+                size=box['size'],
+                rotation=box['rotation'],
+                velocity=box['velocity'],
+                detection_name=box['detection_name'],
+                detection_score=box['detection_score'],
+                attribute_name=box['attribute_name']
+            )
+            bbox_pred_list.append(bbox_pred)
+    
+    # Visualize
+    fig, ax = plt.subplots(1, 1, figsize=(9, 9))
+    
+    # Get and render LIDAR data
+    lidar_token = sample['data']['LIDAR_TOP']
+    lidar_path = nusc.get_sample_data_path(lidar_token)
+    lidar_pc = LidarPointCloud.from_file(lidar_path)
+    points = lidar_pc.points[:3, :]  # Get x, y, z coordinates
+    
+    # Plot points with a colormap based on height (z-coordinate)
+    scatter = ax.scatter(points[0, :], points[1, :], c=points[2, :],
+                        cmap='viridis', s=0.2, alpha=0.5)
+    plt.colorbar(scatter, label='Height')
+    
+    # Show ground truth boxes
+    for box in bbox_gt_list:
+        c = np.array(get_color(box.name, nusc)) / 255.0
+        box.render(ax, view=np.eye(4), colors=(c, c, c))
+    
+    # Show predicted boxes
+    for box in bbox_pred_list:
+        c = np.array(get_color(box.detection_name, nusc)) / 255.0
+        box.render(ax, view=np.eye(4), colors=(c, c, c))
+    
+    # Set axes limits and title
+    ax.set_xlim(-50, 50)
+    ax.set_ylim(-50, 50)
+    ax.set_title('Bird\'s Eye View')
+    ax.set_xlabel('X (meters)')
+    ax.set_ylabel('Y (meters)')
+    ax.grid(True)
+    
+    # Save or show
+    if out_path:
+        plt.savefig(out_path, dpi=200, bbox_inches='tight')
+        plt.close()
+    else:
+        plt.show()
 
-    bbox_anns = data['results'][sample_token]
-    for content in bbox_anns:
-        bbox_pred_list.append(DetectionBox(
-            sample_token=content['sample_token'],
-            translation=tuple(content['translation']),
-            size=tuple(content['size']),
-            rotation=tuple(content['rotation']),
-            velocity=tuple(content['velocity']),
-            ego_translation=(0.0, 0.0, 0.0) if 'ego_translation' not in content
-            else tuple(content['ego_translation']),
-            num_pts=-1 if 'num_pts' not in content else int(content['num_pts']),
-            detection_name=content['detection_name'],
-            detection_score=-1.0 if 'detection_score' not in content else float(content['detection_score']),
-            attribute_name=content['attribute_name']))
-    gt_annotations = EvalBoxes()
-    pred_annotations = EvalBoxes()
-    gt_annotations.add_boxes(sample_token, bbox_gt_list)
-    pred_annotations.add_boxes(sample_token, bbox_pred_list)
-    print('green is ground truth')
-    print('blue is the predited result')
-    visualize_sample(nusc, sample_token, gt_annotations, pred_annotations, savepath=out_path+'_bev')
 
-
-def get_color(category_name: str):
+def get_color(category_name: str, nusc=None) -> List[int]:
     """
-    Provides the default colors based on the category names.
-    This method works for the general nuScenes categories, as well as the nuScenes detection categories.
+    Get color for a category.
+    :param category_name: Category name.
+    :param nusc: NuScenes object (not used).
+    :return: List of RGB values.
     """
-    a = ['noise', 'animal', 'human.pedestrian.adult', 'human.pedestrian.child', 'human.pedestrian.construction_worker',
-     'human.pedestrian.personal_mobility', 'human.pedestrian.police_officer', 'human.pedestrian.stroller',
-     'human.pedestrian.wheelchair', 'movable_object.barrier', 'movable_object.debris',
-     'movable_object.pushable_pullable', 'movable_object.trafficcone', 'static_object.bicycle_rack', 'vehicle.bicycle',
-     'vehicle.bus.bendy', 'vehicle.bus.rigid', 'vehicle.car', 'vehicle.construction', 'vehicle.emergency.ambulance',
-     'vehicle.emergency.police', 'vehicle.motorcycle', 'vehicle.trailer', 'vehicle.truck', 'flat.driveable_surface',
-     'flat.other', 'flat.sidewalk', 'flat.terrain', 'static.manmade', 'static.other', 'static.vegetation',
-     'vehicle.ego']
-    class_names = [
-        'car', 'truck', 'construction_vehicle', 'bus', 'trailer', 'barrier',
-        'motorcycle', 'bicycle', 'pedestrian', 'traffic_cone'
-    ]
-    #print(category_name)
-    if category_name == 'bicycle':
-        return nusc.colormap['vehicle.bicycle']
-    elif category_name == 'construction_vehicle':
-        return nusc.colormap['vehicle.construction']
-    elif category_name == 'traffic_cone':
-        return nusc.colormap['movable_object.trafficcone']
-
-    for key in nusc.colormap.keys():
-        if category_name in key:
-            return nusc.colormap[key]
+    # Default colors for all categories
+    colors = {
+        'car': [0, 255, 0],  # Green
+        'truck': [0, 0, 255],  # Blue
+        'bus': [255, 0, 0],  # Red
+        'trailer': [255, 128, 0],  # Orange
+        'construction_vehicle': [128, 0, 255],  # Purple
+        'pedestrian': [255, 255, 0],  # Yellow
+        'motorcycle': [0, 255, 255],  # Cyan
+        'bicycle': [255, 0, 255],  # Magenta
+        'traffic_cone': [128, 128, 128],  # Gray
+        'barrier': [64, 64, 64],  # Dark Gray
+        # Add more categories as needed
+        'human.pedestrian.adult': [255, 255, 0],  # Yellow
+        'human.pedestrian.child': [255, 255, 128],  # Light Yellow
+        'human.pedestrian.construction_worker': [255, 255, 64],  # Dark Yellow
+        'human.pedestrian.police_officer': [255, 255, 192],  # Very Light Yellow
+        'vehicle.car': [0, 255, 0],  # Green
+        'vehicle.truck': [0, 0, 255],  # Blue
+        'vehicle.bus.bendy': [255, 0, 0],  # Red
+        'vehicle.bus.rigid': [255, 64, 64],  # Light Red
+        'vehicle.motorcycle': [0, 255, 255],  # Cyan
+        'vehicle.bicycle': [255, 0, 255],  # Magenta
+        'vehicle.trailer': [255, 128, 0],  # Orange
+        'movable_object.barrier': [64, 64, 64],  # Dark Gray
+        'movable_object.trafficcone': [128, 128, 128],  # Gray
+    }
+    
+    # Try to match the exact category name first
+    if category_name in colors:
+        return colors[category_name]
+    
+    # Try to match by lowercase comparison
+    category_lower = category_name.lower()
+    for key, value in colors.items():
+        if category_lower == key.lower():
+            return value
+    
+    # Return black if no match found
     return [0, 0, 0]
 
 
@@ -365,108 +411,61 @@ def render_sample_data(
         verbose: bool = True,
         show_panoptic: bool = False,
         pred_data=None,
+        nusc=None,
       ) -> None:
     """
-    Render sample data onto axis.
-    :param sample_data_token: Sample_data token.
+    Render sample data.
+    :param sample_toekn: Sample token.
     :param with_anns: Whether to draw box annotations.
     :param box_vis_level: If sample_data is an image, this sets required visibility for boxes.
-    :param axes_limit: Axes limit for lidar and radar (measured in meters).
-    :param ax: Axes onto which to render.
-    :param nsweeps: Number of sweeps for lidar and radar.
+    :param axes_limit: Axes limit for the visualization.
+    :param ax: Axes to draw on.
+    :param nsweeps: Number of sweeps to render.
     :param out_path: Optional path to save the rendered figure to disk.
-    :param underlay_map: When set to true, lidar data is plotted onto the map. This can be slow.
+    :param underlay_map: When set to true, LIDAR data is plotted onto the map.
     :param use_flat_vehicle_coordinates: Instead of the current sensor's coordinate frame, use ego frame which is
-        aligned to z-plane in the world. Note: Previously this method did not use flat vehicle coordinates, which
-        can lead to small errors when the vertical axis of the global frame and lidar are not aligned. The new
-        setting is more correct and rotates the plot by ~90 degrees.
-    :param show_lidarseg: When set to True, the lidar data is colored with the segmentation labels. When set
-        to False, the colors of the lidar data represent the distance from the center of the ego vehicle.
-    :param show_lidarseg_legend: Whether to display the legend for the lidarseg labels in the frame.
-    :param filter_lidarseg_labels: Only show lidar points which belong to the given list of classes. If None
-        or the list is empty, all classes will be displayed.
-    :param lidarseg_preds_bin_path: A path to the .bin file which contains the user's lidar segmentation
-                                    predictions for the sample.
-    :param verbose: Whether to display the image after it is rendered.
-    :param show_panoptic: When set to True, the lidar data is colored with the panoptic labels. When set
-        to False, the colors of the lidar data represent the distance from the center of the ego vehicle.
-        If show_lidarseg is True, show_panoptic will be set to False.
+                                         aligned to z-plane in the world.
+    :param show_lidarseg: Whether to show lidar segmentation.
+    :param show_lidarseg_legend: Whether to show lidar segmentation legend.
+    :param filter_lidarseg_labels: Only show lidar points which belong to the given list of classes.
+    :param lidarseg_preds_bin_path: Path to the lidar segmentation predictions binary file.
+    :param verbose: Whether to print information about the sample.
+    :param show_panoptic: Whether to show panoptic segmentation.
+    :param pred_data: Predicted data.
+    :param nusc: NuScenes object.
     """
-    lidiar_render(sample_toekn, pred_data, out_path=out_path)
+    if nusc is None:
+        raise ValueError("nusc parameter is required")
+        
+    # Call the lidar render function
+    lidiar_render(sample_toekn, pred_data, out_path=out_path, nusc=nusc)
+    
+    # Get sample data
     sample = nusc.get('sample', sample_toekn)
-    # sample = data['results'][sample_token_list[0]][0]
-    cams = [
-        'CAM_FRONT_LEFT',
-        'CAM_FRONT',
-        'CAM_FRONT_RIGHT',
-        'CAM_BACK_LEFT',
-        'CAM_BACK',
-        'CAM_BACK_RIGHT',
-    ]
-    if ax is None:
-        _, ax = plt.subplots(4, 3, figsize=(24, 18))
-    j = 0
-    for ind, cam in enumerate(cams):
-        sample_data_token = sample['data'][cam]
-
-        sd_record = nusc.get('sample_data', sample_data_token)
-        sensor_modality = sd_record['sensor_modality']
-
-        if sensor_modality in ['lidar', 'radar']:
-            assert False
-        elif sensor_modality == 'camera':
-            # Load boxes and image.
-            boxes = [Box(record['translation'], record['size'], Quaternion(record['rotation']),
-                         name=record['detection_name'], token='predicted') for record in
-                     pred_data['results'][sample_toekn] if record['detection_score'] > 0.2]
-
-            data_path, boxes_pred, camera_intrinsic = get_predicted_data(sample_data_token,
-                                                                         box_vis_level=box_vis_level, pred_anns=boxes)
-            _, boxes_gt, _ = nusc.get_sample_data(sample_data_token, box_vis_level=box_vis_level)
-            if ind == 3:
-                j += 1
-            ind = ind % 3
-            data = Image.open(data_path)
-            # mmcv.imwrite(np.array(data)[:,:,::-1], f'{cam}.png')
-            # Init axes.
-
-            # Show image.
-            ax[j, ind].imshow(data)
-            ax[j + 2, ind].imshow(data)
-
-            # Show boxes.
-            if with_anns:
-                for box in boxes_pred:
-                    c = np.array(get_color(box.name)) / 255.0
-                    box.render(ax[j, ind], view=camera_intrinsic, normalize=True, colors=(c, c, c))
-                for box in boxes_gt:
-                    c = np.array(get_color(box.name)) / 255.0
-                    box.render(ax[j + 2, ind], view=camera_intrinsic, normalize=True, colors=(c, c, c))
-
-            # Limit visible range.
-            ax[j, ind].set_xlim(0, data.size[0])
-            ax[j, ind].set_ylim(data.size[1], 0)
-            ax[j + 2, ind].set_xlim(0, data.size[0])
-            ax[j + 2, ind].set_ylim(data.size[1], 0)
-
-        else:
-            raise ValueError("Error: Unknown sensor modality!")
-
-        ax[j, ind].axis('off')
-        ax[j, ind].set_title('PRED: {} {labels_type}'.format(
-            sd_record['channel'], labels_type='(predictions)' if lidarseg_preds_bin_path else ''))
-        ax[j, ind].set_aspect('equal')
-
-        ax[j + 2, ind].axis('off')
-        ax[j + 2, ind].set_title('GT:{} {labels_type}'.format(
-            sd_record['channel'], labels_type='(predictions)' if lidarseg_preds_bin_path else ''))
-        ax[j + 2, ind].set_aspect('equal')
-
-    if out_path is not None:
-        plt.savefig(out_path+'_camera', bbox_inches='tight', pad_inches=0, dpi=200)
-    if verbose:
+    
+    # Get camera data
+    fig, ax = plt.subplots(2, 3, figsize=(18, 9))
+    ax = ax.flatten()
+    
+    for i, cam in enumerate(cams):
+        data_path, boxes, camera_intrinsic = get_sample_data(sample['data'][cam], box_vis_level=box_vis_level, nusc=nusc)
+        im = Image.open(data_path)
+        ax[i].imshow(im)
+        ax[i].set_title(cam)
+        ax[i].axis('off')
+        
+        # Draw 3D bounding boxes
+        if with_anns:
+            for box in boxes:
+                c = np.array(get_color(box.name, nusc)) / 255.0
+                box.render(ax[i], view=camera_intrinsic, normalize=True, colors=(c, c, c))
+    
+    # Save or show
+    if out_path:
+        plt.savefig(out_path.replace('.png', '_cams.png'))
+        plt.close()
+    else:
         plt.show()
-    plt.close()
 
 if __name__ == '__main__':
     nusc = NuScenes(version='v1.0-trainval', dataroot='./data/nuscenes', verbose=True)

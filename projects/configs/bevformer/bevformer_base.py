@@ -73,7 +73,7 @@ model = dict(
             type='PerceptionTransformer',
             rotate_prev_bev=True,
             use_shift=True,
-            use_can_bus=True,
+            use_can_bus=False,
             embed_dims=_dim_,
             encoder=dict(
                 type='BEVFormerEncoder',
@@ -146,7 +146,6 @@ model = dict(
             loss_weight=2.0),
         loss_bbox=dict(type='L1Loss', loss_weight=0.25),
         loss_iou=dict(type='GIoULoss', loss_weight=0.0)),
-    # model training and testing settings
     train_cfg=dict(pts=dict(
         grid_size=[512, 512, 1],
         voxel_size=voxel_size,
@@ -156,8 +155,14 @@ model = dict(
             type='HungarianAssigner3D',
             cls_cost=dict(type='FocalLossCost', weight=2.0),
             reg_cost=dict(type='BBox3DL1Cost', weight=0.25),
-            iou_cost=dict(type='IoUCost', weight=0.0), # Fake cost. This is just to make it compatible with DETR head.
-            pc_range=point_cloud_range))))
+            iou_cost=dict(type='IoUCost', weight=0.0),
+            pc_range=point_cloud_range))),
+    test_cfg=dict(pts=dict(
+        grid_size=[512, 512, 1],
+        voxel_size=voxel_size,
+        point_cloud_range=point_cloud_range,
+        out_size_factor=4))
+)
 
 dataset_type = 'CustomNuScenesDataset'
 data_root = 'data/nuscenes/'

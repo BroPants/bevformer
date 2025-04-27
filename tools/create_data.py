@@ -3,15 +3,20 @@
 # ---------------------------------------------
 #  Modified by Zhiqi Li
 # ---------------------------------------------
+import sys
+import os
+from os import path as osp
+
+# Add the tools directory to the Python path
+current_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(current_dir)
+
 from data_converter.create_gt_database import create_groundtruth_database
 from data_converter import nuscenes_converter as nuscenes_converter
 from data_converter import lyft_converter as lyft_converter
 from data_converter import kitti_converter as kitti
 from data_converter import indoor_converter as indoor
 import argparse
-from os import path as osp
-import sys
-sys.path.append('.')
 
 
 def kitti_data_prep(root_path, info_prefix, version, out_dir):

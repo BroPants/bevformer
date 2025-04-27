@@ -15,6 +15,7 @@ import copy
 import numpy as np
 import mmdet3d
 from projects.mmdet3d_plugin.models.utils.bricks import run_time
+import mmcv
 
 
 @DETECTORS.register_module()
@@ -42,6 +43,11 @@ class BEVFormer(MVXTwoStageDetector):
                  pretrained=None,
                  video_test_mode=False
                  ):
+
+        if train_cfg is not None and isinstance(train_cfg, dict):
+            train_cfg = mmcv.ConfigDict(train_cfg)
+        if test_cfg is not None and isinstance(test_cfg, dict):
+            test_cfg = mmcv.ConfigDict(test_cfg)
 
         super(BEVFormer,
               self).__init__(pts_voxel_layer, pts_voxel_encoder,

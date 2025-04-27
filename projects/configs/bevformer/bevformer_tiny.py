@@ -8,10 +8,14 @@
 
 
 _base_ = [
-    '../datasets/custom_nus-3d.py',
+    '../datasets/custom_nus-3d_mini.py',
     '../_base_/default_runtime.py'
 ]
-#
+
+custom_imports = dict(
+    imports=['projects.mmdet3d_plugin.bevformer.detectors.bevformer'],
+    allow_failed_imports=False)
+
 plugin = True
 plugin_dir = 'projects/mmdet3d_plugin/'
 
@@ -166,8 +170,15 @@ model = dict(
             type='HungarianAssigner3D',
             cls_cost=dict(type='FocalLossCost', weight=2.0),
             reg_cost=dict(type='BBox3DL1Cost', weight=0.25),
-            iou_cost=dict(type='IoUCost', weight=0.0), # Fake cost. This is just to make it compatible with DETR head.
-            pc_range=point_cloud_range))))
+            iou_cost=dict(type='IoUCost', weight=0.0),
+            pc_range=point_cloud_range)))
+)
+
+test_cfg = dict(pts=dict(
+    grid_size=[512, 512, 1],
+    voxel_size=voxel_size,
+    point_cloud_range=point_cloud_range,
+    out_size_factor=4))
 
 dataset_type = 'CustomNuScenesDataset'
 data_root = 'data/nuscenes/'

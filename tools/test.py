@@ -23,6 +23,7 @@ from projects.mmdet3d_plugin.bevformer.apis.test import custom_multi_gpu_test
 from mmdet.datasets import replace_ImageToTensor
 import time
 import os.path as osp
+from mmcv.utils import ConfigDict
 
 
 def parse_args():
@@ -204,8 +205,12 @@ def main():
     )
 
     # build the model and load checkpoint
-    cfg.model.train_cfg = None
-    model = build_model(cfg.model, test_cfg=cfg.get('test_cfg'))
+    cfg_dict = cfg.model
+    if hasattr(cfg, 'train_cfg'):
+        cfg_dict.update({'train_cfg': ConfigDict(cfg.train_cfg)})
+    if hasattr(cfg, 'test_cfg'):
+        cfg_dict.update({'test_cfg': ConfigDict(cfg.test_cfg)})
+    model = build_model(cfg_dict)
     fp16_cfg = cfg.get('fp16', None)
     if fp16_cfg is not None:
         wrap_fp16_model(model)
@@ -226,16 +231,15 @@ def main():
         model.PALETTE = dataset.PALETTE
 
     if not distributed:
-        assert False
-        # model = MMDataParallel(model, device_ids=[0])
-        # outputs = single_gpu_test(model, data_loader, args.show, args.show_dir)
+        model = MMDataParallel(model, device_ids=[0])
+        outputs = single_gpu_test(model, data_loader, args.show, args.show_dir)
     else:
         model = MMDistributedDataParallel(
             model.cuda(),
             device_ids=[torch.cuda.current_device()],
             broadcast_buffers=False)
         outputs = custom_multi_gpu_test(model, data_loader, args.tmpdir,
-                                        args.gpu_collect)
+                                      args.gpu_collect)
 
     rank, _ = get_dist_info()
     if rank == 0:
